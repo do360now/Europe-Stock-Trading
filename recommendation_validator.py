@@ -44,7 +44,7 @@ class RecommendationValidator:
         except (KeyError, AttributeError, TypeError):
             quant_action = Action.HOLD
 
-        if abs(self._action_to_level(rec.action) - self._action_to_level(quant_action)) > MAX_QUANT_LLM_ACTION_DEVIATION:
+        if abs(self._action_to_level(rec.action) - self._action_to_level(quant_action)) >= MAX_QUANT_LLM_ACTION_DEVIATION:
             logger.warning(f"ANCHORING applied on {rec.ticker}: quant={qs.signal} → LLM={rec.action.value}")
             return replace(rec, action=quant_action, confidence=min(rec.confidence, 0.62))
         return rec
@@ -55,13 +55,19 @@ class RecommendationValidator:
         if not rec.target_price or not rec.stop_loss:
             rec = self._fallback_levels(rec, data)
 
-        rr = self._calc_rr(rec)
         min_rr = 1.8 if "trending" in data.regime.regime else 2.2  # stricter in weak regimes
+        max_retries = 3
 
-        if rr < min_rr or abs(rec.target_price - rec.current_price) / rec.current_price < 0.04:
+        for attempt in range(max_retries):
+            rr = self._calc_rr(rec)
+            target_too_close = abs(rec.target_price - rec.current_price) / rec.current_price < 0.04
+
+            if rr >= min_rr and not target_too_close:
+                break
+
             logger.warning(f"{rec.ticker}: Weak R:R {rr:.1f} or target too close — forcing realistic levels")
             direction = 1 if rec.action in (Action.BUY, Action.STRONG_BUY) else -1
-            realistic_target = self._realistic_target(data, rec.action)
+            realistic_target = self._realistic_target(data, rec.action, attempt)
             realistic_stop = self._realistic_stop(data, rec.action)
             new_rr = abs(realistic_target - rec.current_price) / abs(rec.current_price - realistic_stop)
             rec = replace(rec,
@@ -84,23 +90,6 @@ class RecommendationValidator:
             logger.info(f"Regime guard: {rec.ticker} {regime} → confidence capped {rec.confidence:.0%} → {cap:.0%}")
             rec = replace(rec, confidence=cap)
         return rec
-
-    def _realistic_target(self, data: MarketData, action: Action) -> float:
-        direction = 1 if action in (Action.BUY, Action.STRONG_BUY) else -1
-        candidates = []
-        # Strongest S/R in direction (prefer high strength)
-        for lvl in sorted(data.support_resistance, key=lambda x: x.strength if hasattr(x, 'strength') else 0, reverse=True):
-            dist = getattr(lvl, 'distance_pct', 0)
-            if (direction > 0 and lvl.level_type == "resistance" and dist > 1.5) or \
-               (direction < 0 and lvl.level_type == "support" and dist < -1.5):
-                candidates.append(lvl.price)
-        if candidates:
-            # Take median or strongest
-            return round(sorted(candidates)[len(candidates)//2], 2)
-
-        # ATR fallback — ensure at least 5–6% move
-        min_move = max(data.atr * 5, data.current_price * 0.05)
-        return round(data.current_price + direction * min_move, 2)
 
     def _blend_confidence(self, rec: Recommendation, data: MarketData) -> Recommendation:
         qs = data.quant_score
@@ -125,15 +114,22 @@ class RecommendationValidator:
             target_price=self._realistic_target(data, rec.action),
             stop_loss=self._realistic_stop(data, rec.action))
 
-    def _realistic_target(self, data: MarketData, action: Action) -> float:
+    def _realistic_target(self, data: MarketData, action: Action, attempt: int = 0) -> float:
         direction = 1 if action in (Action.BUY, Action.STRONG_BUY) else -1
+        # Expand search range with each retry attempt
+        min_dist = 0.8 - (attempt * 0.5)  # Start at 0.8%, then 0.3%, then -0.2%
+        max_dist = 15 + (attempt * 10)     # Start at 15%, then 25%, then 35%
+
         # Prefer strongest S/R in the right direction
         for lvl in sorted(data.support_resistance, key=lambda x: getattr(x, 'strength', 0), reverse=True):
             if getattr(lvl, 'level_type', None) == ("resistance" if direction > 0 else "support"):
-                if 0.8 <= getattr(lvl, 'distance_pct', 0) <= 15:
+                dist = getattr(lvl, 'distance_pct', 0)
+                if min_dist <= dist <= max_dist:
                     return round(lvl.price, 2)
-        # ATR fallback
-        return round(data.current_price + direction * ATR_TARGET_MULTIPLIER * data.atr, 2)
+
+        # ATR fallback with multiplier increasing by attempt
+        atr_mult = ATR_TARGET_MULTIPLIER + (attempt * 1.0)  # 4, 5, 6 ATRs
+        return round(data.current_price + direction * atr_mult * data.atr, 2)
 
     def _realistic_stop(self, data: MarketData, action: Action) -> float:
         direction = 1 if action in (Action.BUY, Action.STRONG_BUY) else -1

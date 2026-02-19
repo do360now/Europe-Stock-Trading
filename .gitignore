@@ -12,3 +12,6 @@ __pychache__/
 .idea/
 .vscode/
 logs/
+data/
+data/*
+data/recommendations/

@@ -85,6 +85,7 @@ Each iteration:
 
 ## Key Components
 
+- **models.py**: Core data models with computed properties (`potential_return`, `rr_ratio`) - prevents display breakage
 - **data_collector.py**: Market data fetching, indicator calculation, quant score computation
 - **signal_detector.py**: Institutional footprint detection at S/R levels
 - **llm_analyzer.py**: Ollama integration, prompt engineering, response parsing
