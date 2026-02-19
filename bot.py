@@ -22,13 +22,15 @@ from config import (
     RISK_PCT_PER_TRADE, MAX_POSITION_PCT, TRADING212_MODE,
 )
 from data_collector import DataCollector, MarketData
-from llm_analyzer import LLMAnalyzer, Recommendation, Action
+from llm_analyzer import LLMAnalyzer
+from models import Recommendation, Action
 from display import Display, print_startup_banner
 from signal_detector import SignalDetector
 from broker_interface import (
     Trading212Broker, PaperTradingBroker, create_broker,
     OrderResult, OrderType,
 )
+import config
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -224,6 +226,10 @@ class StockAnalysisBot:
     def _execute_trades(self):
         """Execute trades based on recommendations (if broker enabled)."""
         if not self.broker or self.auto_trade == "off":
+            return
+        
+        if rec.confidence < config.MIN_TRADE_CONFIDENCE or self.validator._calc_rr(rec) < config.MIN_RR_RATIO:
+            logger.warning("Trade blocked by validator")
             return
 
         logger.info("Evaluating trades...")

@@ -234,6 +234,9 @@ class Display:
 
         print(price_line)
 
+        if rec.rr_ratio > 0 and rec.rr_ratio < 1.8:
+            print(f"│  ⚠ LOW R:R ({rec.rr_ratio:.1f}) — risk management suboptimal")
+
         # Active signals for this ticker
         if rec.active_signals:
             print(f"├{'─' * (w - 2)}┤")
@@ -243,6 +246,9 @@ class Display:
                 sig_parts.append(f"{dir_icon}{s['type']}({s['vol_ratio']:.1f}x)")
             sig_line = "│  ⚡ TRIGGERS: " + "  ".join(sig_parts)
             print(sig_line)
+
+        if abs(rec.quant_score) < 0.3 and rec.action in (Action.BUY, Action.SELL):
+            print(f"│  ⚠️  QUANT/LLM DIVERGENCE — Quant says HOLD")
 
         # Reasoning
         print(f"├{'─' * (w - 2)}┤")

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AI-powered stock analysis bot that uses technical indicators and local LLM (Ollama) for intelligent trading recommendations. Primarily focused on European stocks with multi-timeframe analysis.
+AI-powered stock analysis bot that uses technical indicators and local LLM (Ollama) for intelligent trading recommendations. Primarily focused on European stocks with multi-timeframe analysis and regime-aware trading.
 
 ## Commands
 
@@ -40,26 +40,57 @@ Environment variables (in `.env`):
 
 ## Architecture
 
-Built following John Ousterhout's "A Philosophy of Software Design" principles:
+Built following John Ousterhout's "A Philosophy of Software Design" - deep modules with simple interfaces:
 
 ```
 bot.py (thin orchestrator)
-├── data_collector.py  (deep module: market data + technical indicators)
-│   └── get_analysis(ticker) → complete market data with 10+ indicators
-├── llm_analyzer.py    (deep module: LLM analysis)
-│   └── analyze(market_data) → trading recommendation
-└── display.py         (presentation layer)
+├── data_collector.py  (deep: get_analysis(ticker) → MarketData + 30+ indicators)
+├── signal_detector.py (detects institutional footprint signals)
+├── llm_analyzer.py    (deep: analyze(market_data) → Recommendation)
+├── recommendation_validator.py (validates R:R, anchoring, regime guards)
+├── broker_interface.py (Trading212 API + paper trading)
+└── display.py         (terminal dashboard)
 ```
 
-**Deep Module Pattern**: `DataCollector` and `LLMAnalyzer` hide complex implementation behind simple single-method interfaces.
+### Key Design: Quant-Anchored LLM
+
+The bot computes a **quantitative composite score (-1 to +1)** BEFORE sending data to the LLM. This anchors the LLM and prevents hallucinated conviction. The LLM can only deviate ±1 step from the quant signal.
+
+### Data Flow
+
+Each iteration:
+1. `data_collector.get_analysis(ticker)` → MarketData with 30+ indicators + quant score
+2. `signal_detector.detect_signals()` → institutional footprint signals
+3. `llm_analyzer.analyze()` → Recommendation (LLM or quant-only fallback)
+4. `recommendation_validator.refine()` → validated with R:R, anchoring, regime guards
+5. `broker.execute_recommendation()` → trades (if enabled)
+6. `display.show()` → terminal dashboard
+
+## Key Features
+
+- **30+ Technical Indicators**: SMA, EMA, RSI (Wilder-smoothed), MACD, Bollinger Bands, ADX, Stochastic, ATR, OBV, MFI
+- **Regime Detection**: Classifies market as trending_up, trending_down, ranging, or volatile
+- **Multi-Timeframe Confluence**: Weekly confirms/denies daily signals
+- **Volume-at-Level Signals**: Detects institutional order flow (BREAKOUT_CONFIRMED, VOLUME_CLIMAX, ACCUMULATION_AT_SUPPORT, etc.)
+- **Relative Strength**: Stock vs Euro Stoxx 50 performance
+- **Fallback Mode**: Runs in quant-only mode if Ollama unavailable
+- **Risk Management**: R:R validation (MIN_RR_RATIO=1.8), regime confidence caps, ATR-based targets/stops
+
+## Risk Rules (config.py)
+
+- `MIN_RR_RATIO = 1.8` - Minimum reward:risk (1:1.8 conservative)
+- `MAX_QUANT_LLM_ACTION_DEVIATION = 1` - LLM can only deviate ±1 step from quant signal
+- `WEAK_REGIME_CONFIDENCE_CAP = 0.65` - Never exceed 65% confidence in weak/choppy regimes
+- `ATR_TARGET_MULTIPLIER = 4.0` - Target = entry + 4×ATR (for 2:1+ R:R when stop=2×ATR)
 
 ## Key Components
 
-- **data_collector.py**: Fetches market data via yfinance, calculates technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ADX, Stochastic, ATR, MFI), supports multi-timeframe (daily + weekly), includes quantitative pre-scoring before LLM
-- **llm_analyzer.py**: Integrates with Ollama for LLM-powered analysis, includes prompt engineering and response parsing
-- **signal_detector.py**: Additional signal detection logic
-- **broker_interface.py**: Trading212 integration (optional automated trading)
-- **display.py**: Terminal dashboard with color-coded recommendations
+- **data_collector.py**: Market data fetching, indicator calculation, quant score computation
+- **signal_detector.py**: Institutional footprint detection at S/R levels
+- **llm_analyzer.py**: Ollama integration, prompt engineering, response parsing
+- **recommendation_validator.py**: Enforces anchoring, R:R ratios, regime conservatism
+- **broker_interface.py**: Trading212 API with ATR-based position sizing
+- **display.py**: Terminal dashboard with color-coded output
 
 ## Logging
 
@@ -68,4 +99,5 @@ Logs are written to `logs/bot_YYYYMMDD.log`. Use `tail -f logs/bot_*.log` to wat
 ## Data Storage
 
 - `data/recommendations/` - Historical recommendations in JSONL format
+- `data/order_history.jsonl` - Trade execution history
 - `.env` file is git-ignored (never commit API keys)

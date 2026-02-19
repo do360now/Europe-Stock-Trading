@@ -34,38 +34,12 @@ from config import (
     MARKET, HISTORY_DIR,
 )
 from data_collector import MarketData
+from recommendation_validator import RecommendationValidator
 
 logger = logging.getLogger(__name__)
 
+from models import Action, Recommendation
 
-class Action(Enum):
-    STRONG_BUY = "STRONG_BUY"
-    BUY = "BUY"
-    HOLD = "HOLD"
-    SELL = "SELL"
-    STRONG_SELL = "STRONG_SELL"
-
-
-@dataclass
-class Recommendation:
-    ticker: str
-    action: Action
-    confidence: float
-    current_price: float
-    target_price: Optional[float]
-    stop_loss: Optional[float]
-    reasoning: str
-    timestamp: str
-    quant_score: float = 0.0
-    quant_signal: str = "HOLD"
-    regime: str = ""
-    active_signals: list = field(default_factory=list)  # signal summaries
-
-    @property
-    def potential_return(self) -> Optional[float]:
-        if self.target_price:
-            return ((self.target_price - self.current_price) / self.current_price) * 100
-        return None
 
 
 class LLMAnalyzer:
@@ -110,6 +84,7 @@ class LLMAnalyzer:
             prompt = self._build_prompt(market_data)
             response = self._query_ollama(prompt)
             rec = self._parse_response(response, market_data)
+            rec = RecommendationValidator().refine(rec, market_data)
             self._persist_recommendation(rec)
             return rec
         except Exception as e:
@@ -286,15 +261,13 @@ Based on ALL the above, respond with ONLY a JSON object:
     "reasoning": "<2-3 sentence analysis>"
 }}
 
-Rules:
-1. Target price must be based on the nearest resistance (for buys) or support (for sells).
-2. Stop loss must be set using ATR: for buys, current_price - 2*ATR; for sells, current_price + 2*ATR.
-3. If regime is "ranging" or ADX < 20, prefer HOLD unless at extreme S/R level.
-4. Confidence must reflect how many indicators agree. All agree = 0.8+. Mixed = 0.4-0.6.
-5. Do NOT deviate more than one step from the quant signal (e.g. quant says BUY → you can say STRONG_BUY, BUY, or HOLD, but NOT SELL).
-6. CRITICAL or HIGH volume-at-level alerts OVERRIDE regime caution: if accumulation is detected at support, you may raise conviction even in a ranging market.
-7. If a BREAKOUT_CONFIRMED signal is active, this is the strongest possible signal — increase confidence by 0.1-0.2.
-8. If VOLUME_CLIMAX is active, treat it as a reversal signal — it may justify going against the trend.
+RULES (strict — violation will be overridden by validator):
+- Anchor STRICTLY to quant signal. If quant is HOLD (±0.30), NEVER go beyond BUY/SELL and NEVER exceed 55% confidence.
+- In weak_trend_* or ranging regimes, max confidence 50–55% unless CRITICAL volume signal present.
+- Target MUST be at least 5% away in direction (or next real S/R level) — aim for R:R ≥ 1:1.8 (ideally 1:2+).
+- ALWAYS mention if VWAP deviation is bearish/bullish and how it affects conviction.
+- Stop = 2×ATR away minimum. Never set tiny stops/targets.
+- If setup is marginal, prefer HOLD over forcing a trade.
 
 Respond ONLY with valid JSON."""
 

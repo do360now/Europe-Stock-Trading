@@ -17,7 +17,8 @@ from datetime import datetime
 
 from config import TICKERS, UPDATE_INTERVAL
 from data_collector import DataCollector
-from llm_analyzer import LLMAnalyzer, Action
+from llm_analyzer import LLMAnalyzer
+from models import Action
 from broker_interface import create_broker, OrderType
 from dotenv import load_dotenv
 

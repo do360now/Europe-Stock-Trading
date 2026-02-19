@@ -139,3 +139,9 @@ TRADEABLE_ACTIONS = ["STRONG_BUY", "BUY", "SELL", "STRONG_SELL"]
 # ── Logging ─────────────────────────────────────────────────────────────────
 LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# ── Robustness & Risk Rules (new) ───────────────────────────────────────────
+MIN_RR_RATIO = 1.8          # Minimum reward/risk; 1:1.8 is conservative EU-stock standard
+MAX_QUANT_LLM_ACTION_DEVIATION = 1   # 0 = same action, 1 = one step (HOLD ↔ BUY/SELL)
+WEAK_REGIME_CONFIDENCE_CAP = 0.65    # Never let confidence >65% in weak/choppy regimes
+ATR_TARGET_MULTIPLIER = 4.0          # Target = entry + 4×ATR (aims for 2:1+ R:R when stop=2×ATR)
